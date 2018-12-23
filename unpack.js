@@ -2,8 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { DCReader, decrypt } = require('./dc');
 
-const key = '37932a264632304665012971b4b15723';
-const iv = '2da88f24fc41556f347878199ce5ee01';
+const key = '3f70d21d68a9387957e40e40c6064f6b';
+const iv = 'ebf3914c38a2ee376862c333d202f36a';
 
 const DCBasePath = 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\TERA\\Client\\S1Game\\S1Data';
 const DCLang = 'EUR';
