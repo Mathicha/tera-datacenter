@@ -1,2 +1,3 @@
 @echo off
-node --max_old_space_size=4096 unpack.js
+node --max_old_space_size=4096 unpack/unpack
+pause
