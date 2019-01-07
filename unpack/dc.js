@@ -1,3 +1,5 @@
+'use strict';
+
 const fs = require('fs');
 const zlib = require('zlib');
 const crypto = require('crypto');
@@ -29,37 +31,77 @@ class DCReader {
 	constructor(buffer) {
 		this.buffer = buffer;
 		this.offset = 0;
-		this.parsed = {};
+
+		this.TypeCode = new Map()
+			.set(1, () => {
+				return this.UInt32();
+			})
+			.set(2, () => {
+				return this.Float();
+			})
+			.set(5, () => {
+				const value = this.UInt32();
+				if (![0, 1].includes(value)) throw Error('Attributes(): not a bool', value);
+				return Boolean(value);
+			});
 	}
 
-	parse(debug) {
+	parse({ debug = false, mapStrs = false }) {
+		mapStrs = mapStrs ? ['Strings', 'Names'] : [];
+
 		if (debug) console.time('DCReader.parse()');
-		this.parsed = {};
+		const parsed = {};
 
 		if (debug) console.log('DCReader.parse(): Reading Header');
-		this.parsed.Header = this.Header();
+		parsed.Header = this.Header();
 
 		if (debug) console.log('DCReader.parse(): Reading Unk1');
-		this.parsed.Unk1 = this.Region({ type: this.Unk1.bind(this) });
+		parsed.Unk1 = this.Region({ type: 'Unk1' });
 
 		if (debug) console.log('DCReader.parse(): Reading Attributes');
-		this.parsed.Attributes = this.Region({ type: this.Region.bind(this), opts: { type: this.Attributes.bind(this), writeactual: true } });
+		parsed.Attributes = this.Region({ type: 'Region', opts: { type: 'Attributes', writeactual: true } });
 
 		if (debug) console.log('DCReader.parse(): Reading Elements');
-		this.parsed.Elements = this.Region({ type: this.Region.bind(this), opts: { type: this.Elements.bind(this), writeactual: true } });
+		parsed.Elements = this.Region({ type: 'Region', opts: { type: 'Elements', writeactual: true } });
 
 		if (debug) console.log('DCReader.parse(): Reading Strings');
-		this.parsed.Strings = this.StringRegion(1024);
+		parsed.Strings = this.StringRegion(1024);
+
+		if (mapStrs.includes('Strings')) {
+			if (debug) console.log('DCReader.parse(): Mapping Strings');
+			parsed.Strings.map = new Map();
+			for (const index in parsed.Strings.values.data) {
+				const strings = parsed.Strings.values.data[index].value.split('\0');
+				let size = 0;
+				for (let string in strings) {
+					parsed.Strings.map.set(`${index},${size}`, strings[string]);
+					size += strings[string].length + 1;
+				}
+			}
+		}
 
 		if (debug) console.log('DCReader.parse(): Reading Names');
-		this.parsed.Names = this.StringRegion(512);
+		parsed.Names = this.StringRegion(512);
+
+		if (mapStrs.includes('Names')) {
+			if (debug) console.log('DCReader.parse(): Mapping Names');
+			parsed.Names.map = new Map();
+			for (const index in parsed.Names.values.data) {
+				const names = parsed.Names.values.data[index].value.split('\0');
+				let size = 0;
+				for (let name in names) {
+					parsed.Names.map.set(`${index},${size}`, names[name]);
+					size += names[name].length + 1;
+				}
+			}
+		}
 
 		if (this.buffer.length === this.offset) {
 			console.log('DCReader.parse(): Missing Footer!'); // yo pinkie why are u deleting the footer in ur dc mod
-			this.parsed.Footer = { unk1: 0 };
+			parsed.Footer = { unk1: 0 };
 		} else {
 			if (debug) console.log('DCReader.parse(): Reading Footer');
-			this.parsed.Footer = this.Footer();
+			parsed.Footer = this.Footer();
 		}
 
 		if (this.buffer.length === this.offset) {
@@ -67,113 +109,86 @@ class DCReader {
 				console.log('DCReader.parse(): Done!');
 				console.timeEnd('DCReader.parse()');
 			}
-			return this.parsed;
+			return parsed;
 		} else {
 			throw Error(`ERR @ DCReader.parse(): ${this.buffer.length - this.offset} bytes left`);
 		}
 	}
 
 	Header() {
-		let unk1 = this.UInt32LE();
-		let unk2 = this.UInt32LE();
-		let unk3 = this.UInt32LE();
-		let version = this.UInt32LE();
-		let unk4 = this.UInt32LE();
-		let unk5 = this.UInt32LE();
-		let unk6 = this.UInt32LE();
-		let unk7 = this.UInt32LE();
+		let unk1 = this.UInt32();
+		let unk2 = this.UInt32();
+		let unk3 = this.UInt32();
+		let version = this.UInt32();
+		let unk4 = this.UInt32();
+		let unk5 = this.UInt32();
+		let unk6 = this.UInt32();
+		let unk7 = this.UInt32();
 		return { unk1, unk2, unk3, version, unk4, unk5, unk6, unk7 };
 	}
 
 	Unk1() {
-		let unk1 = this.UInt32LE();
-		let unk2 = this.UInt32LE();
-		return { unk1, unk2 };
+		return [this.UInt32(), this.UInt32()];
 	}
 
 	Address() {
-		let segment_index = this.UInt16LE();
-		let element_index = this.UInt16LE();
-		return { segment_index, element_index };
+		return [this.UInt16(), this.UInt16()];
 	}
 
 	Attributes() {
-		let name_index = this.UInt16LE();
-		let type = this.UInt16LE();
+		let name_index = this.UInt16();
+		let type = this.UInt16();
 		let value = null;
-		switch (type) {
-			case 1:
-				value = this.UInt32LE();
-				break;
-			case 2:
-				value = this.FloatLE();
-				break;
-			case 5:
-				value = this.UInt32LE();
-				if (![0, 1].includes(value)) throw Error('Attributes(): not a bool', value);
-				value = Boolean(value);
-				break;
-			default:
-				value = this.Address();
-				break;
-		}
+		if (this.TypeCode.has(type)) value = this.TypeCode.get(type)();
+		else value = this.Address();
 		return { name_index, type, value };
 	}
 
 	Elements() {
-		let name_index = this.UInt16LE();
-		let unk1 = this.UInt16LE();
-		let attribute_count = this.UInt16LE();
-		let children_count = this.UInt16LE();
+		let name_index = this.UInt16();
+		let unk1 = this.UInt16();
+		let attribute_count = this.UInt16();
+		let children_count = this.UInt16();
 		let attributes = this.Address();
 		let children = this.Address();
 		return { name_index, unk1, attribute_count, children_count, attributes, children };
 	}
 
 	StringRegion(size) {
-		let values = this.Region({ type: this.Str.bind(this) });
-		let metadata = this.Region({ type: this.Region.bind(this), opts: { type: this.Meta.bind(this) }, size, writesize: false });
-		let addresses = this.Region({ type: this.Address.bind(this), offby: -1 });
+		let values = this.Region({ type: 'Str' });
+		let metadata = this.Region({ type: 'Region', opts: { type: 'Meta' }, size, writesize: false });
+		let addresses = this.Region({ type: 'Address', offby: -1 });
 		return { values, metadata, addresses };
 	}
 
 	Str() {
-		let size = this.UInt32LE();
-		let x = this.UInt32LE();
-		let value = this.slice(size * 2)
-			.toString('ucs2')
-			.split('\0');
-		let index = 0;
-		let values = {};
-		for (let i = 0; i < value.length; i++) {
-			values[index] = value[i];
-			index += value[i].length + 1;
-		}
-		return { size, x, values };
+		let size = this.UInt32();
+		let used = this.UInt32();
+		let value = this.slice(size * 2).toString('ucs2');
+		return { size, used, value };
 	}
 
 	Meta() {
-		let unk1 = this.UInt32LE();
-		let length = this.UInt32LE();
-		let id = this.UInt32LE();
+		let unk1 = this.UInt32();
+		let length = this.UInt32();
+		let id = this.UInt32();
 		let address = this.Address();
 		return { unk1, length, id, address };
 	}
 
 	Footer() {
-		let unk1 = this.UInt32LE();
-		return [unk1];
+		return [this.UInt32()];
 	}
 
 	Region({ type = [], opts = {}, size = 0, actual = 0, offby = 0, writesize = true, writeactual = false, debug = false }) {
 		let data = {};
 
 		if (writesize) {
-			size = this.UInt32LE();
+			size = this.UInt32();
 			if (debug) console.log('DCReader.Region(): writesize', size);
 		}
 		if (writeactual) {
-			actual = this.UInt32LE();
+			actual = this.UInt32();
 			if (debug) console.log('DCReader.Region(): writeactual', actual);
 		}
 
@@ -181,9 +196,7 @@ class DCReader {
 
 		let arr = [];
 
-		for (let i = 0; i < size; i++) {
-			arr.push(type(opts));
-		}
+		for (let i = 0; i < size; i++) arr.push(this[type](opts));
 
 		if (writesize) data.size = size;
 		if (writeactual) data.actual = actual;
@@ -198,21 +211,21 @@ class DCReader {
 		return data;
 	}
 
-	FloatLE(offset) {
+	Float(offset) {
 		if (offset) this.offset = offset;
 		let data = this.buffer.readFloatLE(this.offset);
 		this.offset += 4;
 		return data;
 	}
 
-	UInt16LE(offset) {
+	UInt16(offset) {
 		if (offset) this.offset = offset;
 		let data = this.buffer.readUInt16LE(this.offset);
 		this.offset += 2;
 		return data;
 	}
 
-	UInt32LE(offset) {
+	UInt32(offset) {
 		if (offset) this.offset = offset;
 		let data = this.buffer.readUInt32LE(this.offset);
 		this.offset += 4;
