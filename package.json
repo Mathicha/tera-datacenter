@@ -1,0 +1,11 @@
+{
+	"name": "tera-datacenter",
+	"version": "1.0.0",
+	"description": "TERA datacenter unpacker",
+	"repository": "https://github.com/Mathicha/tera-datacenter",
+	"author": "Mathi <mathi@mathi.moe>",
+	"license": "MIT",
+	"scripts": {
+		"unpack": "node --max_old_space_size=4096 unpack/unpack"
+	}
+}
